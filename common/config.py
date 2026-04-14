@@ -8,9 +8,9 @@ class Config:
     DB_HOST = '8.148.181.1'
     # DB_HOST = 'localhost'
     DB_PORT = 3306
-    DB_USER = 'root'
+    DB_USER = 'aquant'
     DB_PASSWD = 'Hsy@841121'
-    DB_DATABASE = 'aquant'
+    DB_DATABASE = 'a_quant'
     DB_CANDLE = 'a_candle'
     ITEMS_PER_PAGE = 20
     JWT_AUTH_URL_RULE = '/api/auth'

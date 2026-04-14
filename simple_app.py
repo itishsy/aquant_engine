@@ -99,6 +99,6 @@ def engine_job():
 # engine_name = sys.argv[1:][0]
 # engine_name = "h10"
 # engine_name = "b15"
-# engine_name = "fupan"
-engine_name = "notify"
+engine_name = "fupan"
+# engine_name = "notify"
 test_engine(engine_name)

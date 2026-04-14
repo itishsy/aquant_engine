@@ -10,6 +10,7 @@ import efinance as ef
 import traceback
 import requests
 import time
+from peewee import fn
 
 
 @job_engine

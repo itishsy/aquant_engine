@@ -1,4 +1,4 @@
-from candles.candle import Candle
+from models.candle import Candle
 from typing import List
 
 

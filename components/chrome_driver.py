@@ -1,5 +1,6 @@
 import os
 import shutil
+import requests
 from selenium import webdriver
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions
@@ -15,6 +16,7 @@ class ChromeDriver:
 
     def __init__(self, port=None):
         print("=====chrome driver start=====")
+        self.driver = None
         options = Options()
         chrome_binary = self._find_chrome_binary()
         if chrome_binary is not None:
@@ -28,8 +30,15 @@ class ChromeDriver:
             options.add_experimental_option("debuggerAddress", "127.0.0.1:9222")
         # options.add_experimental_option("excludeSwitches", ["enable-automation"])
         driver_path = self._find_chromedriver()
-        service = Service(driver_path) if driver_path else Service()
-        self.driver = webdriver.Chrome(service=service, options=options)
+        try:
+            if driver_path:
+                service = Service(driver_path)
+                self.driver = webdriver.Chrome(service=service, options=options)
+            else:
+                self.driver = webdriver.Chrome(options=options)
+        except Exception as ex:
+            print("chrome driver unavailable:", ex)
+            self.driver = None
 
     @staticmethod
     def _find_chrome_binary():
@@ -77,10 +86,14 @@ class ChromeDriver:
             return False
 
     def access(self, url, wait=2):
+        if self.driver is None:
+            return
         self.driver.get(url)
         time.sleep(wait)
 
     def element(self, xpath, timeout=20, parent=None):
+        if self.driver is None:
+            return None
         try:
             if parent is not None:
                 xpath = self._xpath(parent) + xpath[1:] if xpath.startswith('.') else xpath
@@ -93,6 +106,8 @@ class ChromeDriver:
             return None
 
     def elements(self, xpath, timeout=20, parent=None):
+        if self.driver is None:
+            return None
         try:
             if parent is not None:
                 xpath = self._xpath(parent) + xpath[1:] if xpath.startswith('.') else xpath
@@ -105,6 +120,8 @@ class ChromeDriver:
             return None
 
     def _xpath(self, element):
+        if self.driver is None:
+            return ''
         return self.driver.execute_script("""
             function generateXPath(elt) {
                 let path = '';
@@ -151,6 +168,15 @@ class ChromeDriver:
         return ele is not None
 
     def fetch_data(self, url, data='data', is_post=False, post_json=None):
+        if self.driver is None:
+            if is_post:
+                response = requests.post(url, json=post_json, timeout=15)
+            else:
+                response = requests.get(url, timeout=15)
+            response.raise_for_status()
+            json_data = response.json()
+            return json_data[data] if data is not None else json_data
+
         if is_post:
             # 启用网络跟踪
             self.driver.execute_cdp_cmd("Network.enable", {})
@@ -215,7 +241,8 @@ class ChromeDriver:
             # print(json_data)
         else:
             self.access(url)
-            json_data = json.loads(self.text("//pre"))
+            text = self.text("//pre")
+            json_data = json.loads(text) if text else {}
         return json_data[data]
 
     def quit(self):

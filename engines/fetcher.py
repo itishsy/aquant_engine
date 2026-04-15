@@ -135,9 +135,6 @@ class Fupan(Fetcher):
     def fetch(self):
         chrome = ChromeDriver()
         try:
-            if chrome.driver is None:
-                raise RuntimeError('Chrome driver is not available')
-
             dtn = datetime.now().strftime("%Y-%m-%d")
             if not Pan.select().where(Pan.date == dtn).exists():
                 pan = Pan()
@@ -168,12 +165,14 @@ class Fupan(Fetcher):
                 height = ztb_data['continuous_limit_up'][0]
                 pan.zgb = height['height']
                 self.update_bk1_by_cls(ztb_data['plate_stock'], dtn)
-                self.update_bk2_by_jys(chrome, dtn)
+                if chrome.driver is not None:
+                    self.update_bk2_by_jys(chrome, dtn)
                 # 8.每日收评
-                chrome.access('https://www.cls.cn/subject/1139')
-                rev_text = chrome.text('//*[@id="__next"]/div/div[2]/div[2]/div[1]/div[2]/div[2]/div[1]/div[2]/div[1]/a')
-                if rev_text and '】' in rev_text:
-                    pan.review = rev_text.split('】')[1]
+                if chrome.driver is not None:
+                    chrome.access('https://www.cls.cn/subject/1139')
+                    rev_text = chrome.text('//*[@id="__next"]/div/div[2]/div[2]/div[1]/div[2]/div[2]/div[1]/div[2]/div[1]/a')
+                    if rev_text and '】' in rev_text:
+                        pan.review = rev_text.split('】')[1]
                 # 9.最强题材
                 pan.concept = self.fetch_concept(dtn)
                 # 10.今日机会
@@ -370,6 +369,8 @@ class Fupan(Fetcher):
     @staticmethod
     def update_bk2_by_jys(chrome, dtn):
         """ 韭研社，每日涨停 """
+        if chrome.driver is None:
+            return
         chrome.access('https://www.jiuyangongshe.com/action')
         chrome.click('//div[@class="active"]')
         chrome.click('//div[@id="tab-accounts"]')

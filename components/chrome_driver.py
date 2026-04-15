@@ -1,4 +1,5 @@
-import requests
+import os
+import shutil
 from selenium import webdriver
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions
@@ -15,7 +16,9 @@ class ChromeDriver:
     def __init__(self, port=None):
         print("=====chrome driver start=====")
         options = Options()
-        options.binary_location = r"D:\Huangsy\chrome\chrome\chrome.exe"
+        chrome_binary = self._find_chrome_binary()
+        if chrome_binary is not None:
+            options.binary_location = chrome_binary
         options.add_argument("--start-maximized")
         if port is not None:
             if not self.check_port():
@@ -24,8 +27,43 @@ class ChromeDriver:
             options.add_argument("--disable-dev-shm-usage")
             options.add_experimental_option("debuggerAddress", "127.0.0.1:9222")
         # options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        service = Service('D:\\Huangsy\\chrome\\chromedriver\\chromedriver.exe')
+        driver_path = self._find_chromedriver()
+        service = Service(driver_path) if driver_path else Service()
         self.driver = webdriver.Chrome(service=service, options=options)
+
+    @staticmethod
+    def _find_chrome_binary():
+        candidates = [
+            os.getenv("CHROME_BINARY"),
+            r"D:\Huangsy\chrome\chrome\chrome.exe",
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files\Chromium\Application\chrome.exe",
+            r"C:\Program Files (x86)\Chromium\Application\chrome.exe",
+        ]
+        for candidate in candidates:
+            if candidate and os.path.exists(candidate):
+                return candidate
+        for cmd in ("chrome", "chrome.exe"):
+            resolved = shutil.which(cmd)
+            if resolved:
+                return resolved
+        return None
+
+    @staticmethod
+    def _find_chromedriver():
+        candidates = [
+            os.getenv("CHROMEDRIVER"),
+            r"D:\Huangsy\chrome\chromedriver\chromedriver.exe",
+        ]
+        for candidate in candidates:
+            if candidate and os.path.exists(candidate):
+                return candidate
+        for cmd in ("chromedriver", "chromedriver.exe"):
+            resolved = shutil.which(cmd)
+            if resolved:
+                return resolved
+        return None
 
     @staticmethod
     def check_port(host="127.0.0.1", port=9222, timeout=5):
@@ -182,5 +220,6 @@ class ChromeDriver:
 
     def quit(self):
         print("=====chrome driver quit=====")
-        self.driver.quit()
+        if self.driver is not None:
+            self.driver.quit()
 

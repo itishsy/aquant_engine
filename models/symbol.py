@@ -1,5 +1,5 @@
 from models.base import BaseModel, db
-from flask_peewee.db import CharField, IntegerField, FloatField, DateTimeField
+from peewee import CharField, DateTimeField, FloatField
 from datetime import datetime
 
 

@@ -1,7 +1,7 @@
 from models.base import BaseModel, db
 from werkzeug.security import check_password_hash, generate_password_hash
 from flask_login import UserMixin
-from flask_peewee.db import CharField, BooleanField
+from peewee import BooleanField, CharField
 from app import login_manager
 
 

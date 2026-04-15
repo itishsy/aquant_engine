@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
-from flask_peewee.db import MySQLDatabase, Model
 import json
-from common.config import config
 import os
+
+from peewee import Model, MySQLDatabase
+
+from common.config import config
 
 cfg = config[os.getenv('FLASK_CONFIG') or 'default']
 
@@ -25,11 +27,11 @@ class BaseModel(Model):
 
 
 if __name__ == '__main__':
-    from models.signal import Signal
     from models.choice import Choice
-    from models.ticket import Ticket
-    from models.component import Component
-    from models.candle import Trade
+    from models.engine import Engine
+    from models.review import Hot, Pan, Ztb
+    from models.signal import Signal
+    from models.symbol import Symbol
 
     db.connect()
-    db.create_tables([Signal, Choice, Ticket, Component, Trade])
+    db.create_tables([Signal, Choice, Engine, Symbol, Pan, Hot, Ztb])

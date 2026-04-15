@@ -1,6 +1,6 @@
 from datetime import datetime
 from models.base import BaseModel, db
-from flask_peewee.db import CharField, DecimalField, IntegerField, DateTimeField, AutoField
+from peewee import AutoField, CharField, DateTimeField, DecimalField, IntegerField
 # from candles.storage import find_candles
 from models.symbol import Symbol
 from signals.utils import *

@@ -1,6 +1,6 @@
 from models.base import BaseModel, db
 from models.signal import Signal
-from flask_peewee.db import CharField, IntegerField, DateTimeField, AutoField, DecimalField
+from peewee import AutoField, CharField, DateTimeField
 from datetime import datetime
 
 

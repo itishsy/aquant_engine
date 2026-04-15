@@ -1,9 +1,5 @@
 from abc import ABC, abstractmethod
-from models.signal import Signal
-from models.choice import Choice
 from datetime import datetime
-from components.candle_fetcher import CandleFetcher
-from components.notify import email, signal_notify
 from typing import List
 
 
@@ -15,6 +11,7 @@ def job_engine(cls):
 
     def register(clz):
         engines[cls_name] = clz
+        return clz
 
     return register(cls)
 
@@ -23,6 +20,9 @@ class Searcher(ABC):
     cf = None
 
     def start(self):
+        from components.candle_fetcher import CandleFetcher
+        from models.choice import Choice
+
         searcher = self.__class__.__name__.lower()
         self.cf = CandleFetcher()
         Choice.delete().where(Choice.searcher == searcher).execute()
@@ -34,7 +34,7 @@ class Searcher(ABC):
         print('[{0}] search {1} done!'.format(datetime.now(), searcher))
 
     @abstractmethod
-    def search(self) -> List[Choice]:
+    def search(self) -> List['Choice']:
         pass
 
 
@@ -42,6 +42,11 @@ class Watcher(ABC):
     cf = None
 
     def start(self):
+        from components.candle_fetcher import CandleFetcher
+        from components.notify import email, signal_notify
+        from models.choice import Choice
+        from models.signal import Signal
+
         self.cf = CandleFetcher()
         watcher = self.__class__.__name__.lower()
         choices = Choice.select().where(Choice.watcher == watcher)
@@ -73,7 +78,7 @@ class Watcher(ABC):
                     si.save()
 
     @abstractmethod
-    def watch(self, choice: Choice) -> Signal:
+    def watch(self, choice: 'Choice') -> 'Signal':
         pass
 
 

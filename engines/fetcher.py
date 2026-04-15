@@ -1,14 +1,9 @@
-import engines.engine
-from engines.engine import job_engine, Fetcher
-from models.symbol import Symbol
+from engines.engine import Fetcher, engines, job_engine
 from datetime import datetime
-from components.candle_fetcher import CandleFetcher
 from components.chrome_driver import ChromeDriver, By
 from models.review import Pan, Hot, Ztb
 # from models.ztb import Ztb, Bk
-import efinance as ef
 import traceback
-import requests
 import time
 from peewee import fn
 
@@ -17,6 +12,9 @@ from peewee import fn
 class Candles(Fetcher):
 
     def fetch(self):
+        from components.candle_fetcher import CandleFetcher
+        from models.symbol import Symbol
+
         cf = CandleFetcher()
 
         now = datetime.now()
@@ -47,6 +45,9 @@ class Candles(Fetcher):
 class Symbols(Fetcher):
 
     def fetch(self):
+        import efinance as ef
+        from models.symbol import Symbol
+
         df = ef.stock.get_all_company_performance()
         # df = ef.stock.get_realtime_quotes()
         df = df.iloc[:, 0:2]
@@ -80,11 +81,13 @@ class Symbols(Fetcher):
 
 
 def stock_format(stock_str):
+    from models.symbol import Symbol
+
     name = stock_str.split('\n')[0].replace(' ', '')
     if name.__contains__('+') or name.__contains__('-'):
         name = name.split('+')[0]
         name = name.split('-')[0]
-    ss = Symbol.select().where(Symbol.name == name or Symbol.code == name)
+    ss = Symbol.select().where((Symbol.name == name) | (Symbol.code == name))
     if len(ss) > 0:
         return '{}|{}'.format(ss[0].name, ss[0].code)
     return ''
@@ -132,6 +135,9 @@ class Fupan(Fetcher):
     def fetch(self):
         chrome = ChromeDriver()
         try:
+            if chrome.driver is None:
+                raise RuntimeError('Chrome driver is not available')
+
             dtn = datetime.now().strftime("%Y-%m-%d")
             if not Pan.select().where(Pan.date == dtn).exists():
                 pan = Pan()
@@ -166,41 +172,25 @@ class Fupan(Fetcher):
                 # 8.每日收评
                 chrome.access('https://www.cls.cn/subject/1139')
                 rev_text = chrome.text('//*[@id="__next"]/div/div[2]/div[2]/div[1]/div[2]/div[2]/div[1]/div[2]/div[1]/a')
-                if '】' in rev_text:
+                if rev_text and '】' in rev_text:
                     pan.review = rev_text.split('】')[1]
                 # 9.最强题材
                 pan.concept = self.fetch_concept(dtn)
                 # 10.今日机会
                 subject_data = chrome.fetch_data('https://www.cls.cn/api/subject/recommend/article?app=CailianpressWeb&os=web&sv=8.4.6&sign=9f8797a1f4de66c2370f7a03990d2737')
                 chance = subject_data['today_chances']
-                pan.chance = '{} | {} {}<br>{} | {} {}<br>{} | {} {}'.format(
-                    chance[0]['subject_name'], chance[0]['article_name'], stock_link(chance[0]['stock_list'], 'StockID', 'name', 'last', 'RiseRange'),
-                    chance[1]['subject_name'], chance[1]['article_name'], stock_link(chance[1]['stock_list'], 'StockID', 'name', 'last', 'RiseRange'),
-                    chance[2]['subject_name'], chance[2]['article_name'], stock_link(chance[2]['stock_list'], 'StockID', 'name', 'last', 'RiseRange'))
+                pan.chance = self._format_subject_items(chance, 'stock_list', 'article_name')
                 # 11.今日风口
                 tuyere = subject_data['today_tuyeres']
-                pan.tuyere = '{} | {} {}<br>{} | {} {}<br>{} | {} {}'.format(
-                    tuyere[0]['subject_name'], tuyere[0]['driver'], stock_link(tuyere[0]['stocks'], 'StockID', 'name', 'last', 'RiseRange'),
-                    tuyere[1]['subject_name'], tuyere[1]['driver'], stock_link(tuyere[1]['stocks'], 'StockID', 'name', 'last', 'RiseRange'),
-                    tuyere[2]['subject_name'], tuyere[2]['driver'], stock_link(tuyere[2]['stocks'], 'StockID', 'name', 'last', 'RiseRange'))
+                pan.tuyere = self._format_subject_items(tuyere, 'stocks', 'driver')
                 # 12.今日话题
                 topic_url = 'https://dq.10jqka.com.cn/fuyao/hot_list_data/out/hot_list/v1/topic?page=1&page_size=10'
                 topic_data = chrome.fetch_data(topic_url)['topic_list']
-                pan.topic = '(1){}|{}<br>(2){}|{}<br>(3){}|{}'.format(
-                    topic_data[0]['title'], topic_data[0]['description'],
-                    topic_data[1]['title'], topic_data[1]['description'],
-                    topic_data[2]['title'], topic_data[2]['description'],
-                    topic_data[3]['title'], topic_data[3]['description'],
-                    topic_data[4]['title'], topic_data[4]['description'])
+                pan.topic = self._format_ranked_text(topic_data, 'title', 'description')
                 # 13.热门题材
                 subject_url = 'https://dq.10jqka.com.cn/fuyao/hot_list_data/out/hot_list/v1/plate?type=concept'
                 plate_list = chrome.fetch_data(subject_url)['plate_list']
-                pan.subject = '(1){}|{}<br>(2){}|{}<br>(3){}|{}'.format(
-                    plate_list[0]['name'], '' if 'hot_tag' not in plate_list[0] else plate_list[0]['hot_tag'] + '' if 'tag' not in plate_list[0] else plate_list[0]['tag'],
-                    plate_list[1]['name'], '' if 'hot_tag' not in plate_list[1] else plate_list[1]['hot_tag'] + '' if 'tag' not in plate_list[1] else plate_list[1]['tag'],
-                    plate_list[2]['name'], '' if 'hot_tag' not in plate_list[2] else plate_list[2]['hot_tag'] + '' if 'tag' not in plate_list[2] else plate_list[2]['tag'],
-                    plate_list[3]['name'], '' if 'hot_tag' not in plate_list[3] else plate_list[3]['hot_tag'] + '' if 'tag' not in plate_list[3] else plate_list[3]['tag'],
-                    plate_list[4]['name'], '' if 'hot_tag' not in plate_list[4] else plate_list[4]['hot_tag'] + '' if 'tag' not in plate_list[4] else plate_list[4]['tag'])
+                pan.subject = self._format_plate_list(plate_list)
                 # 14.资金动向
                 fund_data = chrome.fetch_data('https://x-quote.cls.cn/web_quote/plate/plate_list?app=CailianpressWeb&os=web&page=1&rever=1&sv=8.4.6&type=industry&way=change&sign=ef1ec7886be706a0b722d7e7bf3c0054')
                 top_fund = fund_data['main_fund_diff']['top_main_fund_diff']
@@ -239,7 +229,8 @@ class Fupan(Fetcher):
                         "https://dq.10jqka.com.cn/fuyao/hot_list_data/out/hot_list/v1/stock?stock_type=a&type=hour&list_type=normal")[
                         'stock_list']
                 scores = [37, 31, 29, 23, 19, 17, 13, 11, 7, 5, 3, 2, 1, 1, 1, 1, 1, 1, 1, 1]
-                for i in range(20):
+                hot_size = min(20, len(hot_cls), len(hot_tgb), len(hot_ths), len(scores))
+                for i in range(hot_size):
                     cls_stock = hot_cls[i]['stock']
                     up_reason = chrome.fetch_data('https://x-quote.cls.cn/v2/quote/a/stock/up_reason?app=cailianpress&os=ios&sv=800&secu_codes={}&sign=f7f970ee36fc102317eeea2e5a6eb178'.format(
                             cls_stock['StockID']))
@@ -280,6 +271,34 @@ class Fupan(Fetcher):
             traceback.print_exc()
         finally:
             chrome.quit()
+
+    @staticmethod
+    def _format_subject_items(items, stocks_key, detail_key):
+        lines = []
+        for item in items[:3]:
+            lines.append(
+                '{} | {} {}'.format(
+                    item.get('subject_name', ''),
+                    item.get(detail_key, ''),
+                    stock_link(item.get(stocks_key, []), 'StockID', 'name', 'last', 'RiseRange'),
+                ).strip()
+            )
+        return '<br>'.join(lines)
+
+    @staticmethod
+    def _format_ranked_text(items, title_key, desc_key):
+        lines = []
+        for idx, item in enumerate(items[:5], start=1):
+            lines.append('({}){}|{}'.format(idx, item.get(title_key, ''), item.get(desc_key, '')))
+        return '<br>'.join(lines)
+
+    @staticmethod
+    def _format_plate_list(plate_list):
+        lines = []
+        for idx, plate in enumerate(plate_list[:5], start=1):
+            tag = plate.get('hot_tag') or plate.get('tag') or ''
+            lines.append('({}){}|{}'.format(idx, plate.get('name', ''), tag))
+        return '<br>'.join(lines)
 
     @staticmethod
     def set_hots(hots, dt, source, rank, score, code, name, reason, comment):
@@ -341,9 +360,9 @@ class Fupan(Fetcher):
                     ztt = stock['time'].split(' ')
                     zt.time = ztt[1]
                     zt.strong = stock['up_num']
-                    up_reason = stock['up_reason'].split('|')
-                    zt.reason = up_reason[0]
-                    zt.comment1 = up_reason[1]
+                    up_reason = (stock.get('up_reason') or '').split('|', 1)
+                    zt.reason = up_reason[0] if up_reason else ''
+                    zt.comment1 = up_reason[1] if len(up_reason) > 1 else ''
                     zt.comment2 = ''
                     zt.created = datetime.now()
                     zt.save()
@@ -369,7 +388,7 @@ class Fupan(Fetcher):
                     shrinks = li.find_elements(By.XPATH, ".//div[contains(@class, 'shrink')]")
                     code = shrinks[1].get_attribute("innerText")[2:]
                     zts_comment = li.find_element(By.XPATH, ".//pre[contains(@class, 'expound')]/a").get_attribute("innerText").split('\n')
-                    ztb = Ztb.select().where(Ztb.date == dtn and Ztb.code == code)
+                    ztb = Ztb.select().where((Ztb.date == dtn) & (Ztb.code == code))
                     for zt in ztb:
                         zt.reason = '{} | {}'.format(zt.reason, zts_comment[0])
                         zt.bk2 = bk.text
@@ -435,7 +454,7 @@ def set_hots2(hots, dt, source, rank, score, code, name, reason, comment):
 
 
 if __name__ == '__main__':
-    fupan = engines.engine.engines['fupan']()
+    fupan = engines['fupan']()
     fupan.fetch()
 
 

@@ -1,5 +1,6 @@
 import os
 import shutil
+import stat
 import requests
 from selenium import webdriver
 from selenium.webdriver.support.ui import WebDriverWait
@@ -21,17 +22,17 @@ class ChromeDriver:
         chrome_binary = self._find_chrome_binary()
         if chrome_binary is not None:
             options.binary_location = chrome_binary
-        options.add_argument("--start-maximized")
+        self._apply_runtime_options(options, port)
         if port is not None:
             if not self.check_port():
                 self.driver = None
                 return
-            options.add_argument("--disable-dev-shm-usage")
             options.add_experimental_option("debuggerAddress", "127.0.0.1:9222")
         # options.add_experimental_option("excludeSwitches", ["enable-automation"])
         driver_path = self._find_chromedriver()
         try:
             if driver_path:
+                self._ensure_executable(driver_path)
                 service = Service(driver_path)
                 self.driver = webdriver.Chrome(service=service, options=options)
             else:
@@ -41,19 +42,39 @@ class ChromeDriver:
             self.driver = None
 
     @staticmethod
+    def _component_dir():
+        return os.path.join(os.path.dirname(__file__), "browser", "linux64")
+
+    @staticmethod
+    def _apply_runtime_options(options, port):
+        options.add_argument("--start-maximized")
+        if os.name == "posix":
+            options.add_argument("--headless=new")
+            options.add_argument("--no-sandbox")
+            options.add_argument("--disable-gpu")
+            options.add_argument("--disable-dev-shm-usage")
+            options.add_argument("--window-size=1920,1080")
+        elif port is not None:
+            options.add_argument("--disable-dev-shm-usage")
+
+    @staticmethod
     def _find_chrome_binary():
-        candidates = [
-            os.getenv("CHROME_BINARY"),
-            r"D:\Huangsy\chrome\chrome\chrome.exe",
-            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-            r"C:\Program Files\Chromium\Application\chrome.exe",
-            r"C:\Program Files (x86)\Chromium\Application\chrome.exe",
-        ]
+        candidates = [os.getenv("CHROME_BINARY")]
+        if os.name == "posix":
+            candidates.append(os.path.join(ChromeDriver._component_dir(), "chrome-linux64", "chrome"))
+        else:
+            candidates.extend([
+                r"D:\Huangsy\chrome\chrome\chrome.exe",
+                r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+                r"C:\Program Files\Chromium\Application\chrome.exe",
+                r"C:\Program Files (x86)\Chromium\Application\chrome.exe",
+            ])
         for candidate in candidates:
             if candidate and os.path.exists(candidate):
                 return candidate
-        for cmd in ("chrome", "chrome.exe"):
+        commands = ("google-chrome", "google-chrome-stable", "chrome", "chromium", "chromium-browser") if os.name == "posix" else ("chrome", "chrome.exe")
+        for cmd in commands:
             resolved = shutil.which(cmd)
             if resolved:
                 return resolved
@@ -61,18 +82,27 @@ class ChromeDriver:
 
     @staticmethod
     def _find_chromedriver():
-        candidates = [
-            os.getenv("CHROMEDRIVER"),
-            r"D:\Huangsy\chrome\chromedriver\chromedriver.exe",
-        ]
+        candidates = [os.getenv("CHROMEDRIVER")]
+        if os.name == "posix":
+            candidates.append(os.path.join(ChromeDriver._component_dir(), "chromedriver-linux64", "chromedriver"))
+        else:
+            candidates.append(r"D:\Huangsy\chrome\chromedriver\chromedriver.exe")
         for candidate in candidates:
             if candidate and os.path.exists(candidate):
                 return candidate
-        for cmd in ("chromedriver", "chromedriver.exe"):
+        commands = ("chromedriver",) if os.name == "posix" else ("chromedriver", "chromedriver.exe")
+        for cmd in commands:
             resolved = shutil.which(cmd)
             if resolved:
                 return resolved
         return None
+
+    @staticmethod
+    def _ensure_executable(path):
+        if os.name != "posix" or not path or not os.path.exists(path):
+            return
+        mode = os.stat(path).st_mode
+        os.chmod(path, mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
     @staticmethod
     def check_port(host="127.0.0.1", port=9222, timeout=5):

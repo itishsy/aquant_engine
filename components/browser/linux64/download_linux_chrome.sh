@@ -1,9 +1,9 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/usr/bin/env sh
+set -eu
 
 VERSION="147.0.7727.57"
 BASE_URL="https://storage.googleapis.com/chrome-for-testing-public/${VERSION}/linux64"
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 ARCHIVE_PATH="${ROOT_DIR}/chrome-linux64.zip"
 EXTRACT_DIR="${ROOT_DIR}"
 

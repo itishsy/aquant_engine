@@ -13,6 +13,7 @@ Linux runtime notes:
 - Headless flags are applied automatically on Linux: `--headless=new`, `--no-sandbox`, `--disable-gpu`, `--disable-dev-shm-usage`.
 - If `chrome-linux64/chrome` is missing, install Chrome with the script in this folder or point `CHROME_BINARY` to a system Chrome/Chromium.
 - After downloading, make sure the host has the shared libraries required by Chrome. The bundled `deb.deps` file under `chrome-linux64` lists the common Debian/Ubuntu packages.
+- Set `CHROME_HEADLESS=false` to launch Chrome with a visible window instead of headless mode.
 
 Quick start on Linux:
 
@@ -26,3 +27,4 @@ Override paths if needed:
 
 - `CHROME_BINARY=/abs/path/to/chrome`
 - `CHROMEDRIVER=/abs/path/to/chromedriver`
+- `CHROME_HEADLESS=false`

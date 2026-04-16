@@ -29,6 +29,7 @@ class ChromeDriver:
     def __init__(self, port=None):
         print("=====chrome driver start=====")
         self.driver = None
+        self.headless = self._is_headless_enabled()
         if port is not None and not self.check_port():
             return
 
@@ -38,7 +39,9 @@ class ChromeDriver:
 
         last_error = None
         for use_legacy_headless in (False, True):
-            options = self._build_options(port, use_legacy_headless=use_legacy_headless)
+            if not self.headless and use_legacy_headless:
+                break
+            options = self._build_options(port, use_legacy_headless=use_legacy_headless, headless=self.headless)
             try:
                 if driver_path:
                     service = Service(driver_path)
@@ -64,32 +67,43 @@ class ChromeDriver:
         return os.path.join(os.path.dirname(__file__), "browser", "linux64")
 
     @staticmethod
-    def _build_options(port=None, use_legacy_headless=False):
+    def _build_options(port=None, use_legacy_headless=False, headless=True):
         options = Options()
         options.page_load_strategy = "eager"
         chrome_binary = ChromeDriver._find_chrome_binary()
         if chrome_binary is not None:
             options.binary_location = chrome_binary
-        ChromeDriver._apply_runtime_options(options, port, use_legacy_headless=use_legacy_headless)
+        ChromeDriver._apply_runtime_options(
+            options,
+            port,
+            use_legacy_headless=use_legacy_headless,
+            headless=headless
+        )
         if port is not None:
             options.add_experimental_option("debuggerAddress", "127.0.0.1:9222")
         return options
 
     @staticmethod
-    def _apply_runtime_options(options, port, use_legacy_headless=False):
+    def _apply_runtime_options(options, port, use_legacy_headless=False, headless=True):
         options.add_argument("--start-maximized")
         options.add_argument("--disable-background-networking")
         options.add_argument("--disable-extensions")
         options.add_argument("--disable-popup-blocking")
         options.add_argument("--remote-allow-origins=*")
         if os.name == "posix":
-            options.add_argument("--headless" if use_legacy_headless else "--headless=new")
+            if headless:
+                options.add_argument("--headless" if use_legacy_headless else "--headless=new")
             options.add_argument("--no-sandbox")
             options.add_argument("--disable-gpu")
             options.add_argument("--disable-dev-shm-usage")
             options.add_argument("--window-size=1920,1080")
         elif port is not None:
             options.add_argument("--disable-dev-shm-usage")
+
+    @staticmethod
+    def _is_headless_enabled():
+        value = os.getenv("CHROME_HEADLESS", "true").strip().lower()
+        return value not in ("0", "false", "no", "off")
 
     @staticmethod
     def _find_chrome_binary():

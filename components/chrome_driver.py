@@ -1,6 +1,7 @@
 import os
 import shutil
 import stat
+from urllib.parse import urlparse
 import requests
 from selenium import webdriver
 from selenium.common.exceptions import TimeoutException, WebDriverException
@@ -15,10 +16,22 @@ import socket
 
 
 class ChromeDriver:
+    DEFAULT_HEADERS = {
+        "User-Agent": (
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/147.0.7727.57 Safari/537.36"
+        ),
+        "Accept": "application/json,text/plain,*/*",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+    }
 
     def __init__(self, port=None):
         print("=====chrome driver start=====")
         self.driver = None
+        self.session = requests.Session()
+        self.session.headers.update(self.DEFAULT_HEADERS)
         options = Options()
         options.page_load_strategy = "eager"
         chrome_binary = self._find_chrome_binary()
@@ -212,10 +225,11 @@ class ChromeDriver:
 
     def fetch_data(self, url, data='data', is_post=False, post_json=None):
         if self.driver is None:
+            headers = self._request_headers(url)
             if is_post:
-                response = requests.post(url, json=post_json, timeout=15)
+                response = self.session.post(url, json=post_json, headers=headers, timeout=20)
             else:
-                response = requests.get(url, timeout=15)
+                response = self.session.get(url, headers=headers, timeout=20)
             response.raise_for_status()
             json_data = response.json()
             return json_data[data] if data is not None else json_data
@@ -288,8 +302,28 @@ class ChromeDriver:
             json_data = json.loads(text) if text else {}
         return json_data[data]
 
+    @staticmethod
+    def _request_headers(url):
+        parsed = urlparse(url)
+        host = parsed.netloc.lower()
+        headers = dict(ChromeDriver.DEFAULT_HEADERS)
+        headers["Host"] = parsed.netloc
+
+        if "10jqka.com.cn" in host:
+            headers["Referer"] = "https://dq.10jqka.com.cn/"
+            headers["Origin"] = "https://dq.10jqka.com.cn"
+        elif "cls.cn" in host:
+            headers["Referer"] = "https://www.cls.cn/"
+            headers["Origin"] = "https://www.cls.cn"
+        elif "xueqiu.com" in host:
+            headers["Referer"] = "https://xueqiu.com/"
+            headers["Origin"] = "https://xueqiu.com"
+
+        return headers
+
     def quit(self):
         print("=====chrome driver quit=====")
         if self.driver is not None:
             self.driver.quit()
+        self.session.close()
 

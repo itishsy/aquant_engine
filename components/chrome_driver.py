@@ -3,6 +3,7 @@ import shutil
 import stat
 import requests
 from selenium import webdriver
+from selenium.common.exceptions import TimeoutException, WebDriverException
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions
 from selenium.webdriver.chrome.options import Options
@@ -19,6 +20,7 @@ class ChromeDriver:
         print("=====chrome driver start=====")
         self.driver = None
         options = Options()
+        options.page_load_strategy = "eager"
         chrome_binary = self._find_chrome_binary()
         if chrome_binary is not None:
             options.binary_location = chrome_binary
@@ -37,6 +39,7 @@ class ChromeDriver:
                 self.driver = webdriver.Chrome(service=service, options=options)
             else:
                 self.driver = webdriver.Chrome(options=options)
+            self.driver.set_page_load_timeout(30)
         except Exception as ex:
             print("chrome driver unavailable:", ex)
             self.driver = None
@@ -118,8 +121,18 @@ class ChromeDriver:
     def access(self, url, wait=2):
         if self.driver is None:
             return
-        self.driver.get(url)
-        time.sleep(wait)
+        try:
+            self.driver.get(url)
+            time.sleep(wait)
+        except TimeoutException:
+            print("[Warn] page load timeout:", url)
+            try:
+                self.driver.execute_script("window.stop();")
+            except WebDriverException:
+                pass
+        except WebDriverException as ex:
+            print("[Error] browser access failed:", url, ex)
+            raise
 
     def element(self, xpath, timeout=20, parent=None):
         if self.driver is None:

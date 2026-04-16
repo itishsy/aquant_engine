@@ -371,30 +371,35 @@ class Fupan(Fetcher):
         """ 韭研社，每日涨停 """
         if chrome.driver is None:
             return
-        chrome.access('https://www.jiuyangongshe.com/action')
-        chrome.click('//div[@class="active"]')
-        chrome.click('//div[@id="tab-accounts"]')
-        chrome.input('//div[@id="pane-accounts"]//input[@name="phone"]', '13631367271')
-        chrome.input('//div[@id="pane-accounts"]//input[@name="password"]', 'hsy841121')
-        chrome.click('//div[@id="pane-accounts"]//button[@type="button"]')
-        time.sleep(3)
-        chrome.click('//div[text()="全部异动解析"]', timeout=10)
-        time.sleep(3)
-        modules = chrome.elements("//section/ul/li")
-        for module in modules:
-            bk = chrome.element(".//div[contains(@class, 'parent')]/div[1]", parent=module)
-            if bk and not bk.text.__contains__('ST'):
-                lis = module.find_elements(By.TAG_NAME, 'li')
-                for li in lis:
-                    shrinks = li.find_elements(By.XPATH, ".//div[contains(@class, 'shrink')]")
-                    code = shrinks[1].get_attribute("innerText")[2:]
-                    zts_comment = li.find_element(By.XPATH, ".//pre[contains(@class, 'expound')]/a").get_attribute("innerText").split('\n')
-                    ztb = Ztb.select().where((Ztb.date == dtn) & (Ztb.code == code))
-                    for zt in ztb:
-                        zt.reason = '{} | {}'.format(zt.reason, zts_comment[0])
-                        zt.bk2 = bk.text
-                        zt.comment2 = zts_comment[1]
-                        zt.save()
+        try:
+            chrome.access('https://www.jiuyangongshe.com/action')
+            chrome.click('//div[@class="active"]')
+            chrome.click('//div[@id="tab-accounts"]')
+            chrome.input('//div[@id="pane-accounts"]//input[@name="phone"]', '13631367271')
+            chrome.input('//div[@id="pane-accounts"]//input[@name="password"]', 'hsy841121')
+            chrome.click('//div[@id="pane-accounts"]//button[@type="button"]')
+            time.sleep(3)
+            chrome.click('//div[text()="全部异动解析"]', timeout=10)
+            time.sleep(3)
+            modules = chrome.elements("//section/ul/li") or []
+            for module in modules:
+                bk = chrome.element(".//div[contains(@class, 'parent')]/div[1]", parent=module)
+                if bk and not bk.text.__contains__('ST'):
+                    lis = module.find_elements(By.TAG_NAME, 'li')
+                    for li in lis:
+                        shrinks = li.find_elements(By.XPATH, ".//div[contains(@class, 'shrink')]")
+                        if len(shrinks) < 2:
+                            continue
+                        code = shrinks[1].get_attribute("innerText")[2:]
+                        zts_comment = li.find_element(By.XPATH, ".//pre[contains(@class, 'expound')]/a").get_attribute("innerText").split('\n')
+                        ztb = Ztb.select().where((Ztb.date == dtn) & (Ztb.code == code))
+                        for zt in ztb:
+                            zt.reason = '{} | {}'.format(zt.reason, zts_comment[0])
+                            zt.bk2 = bk.text
+                            zt.comment2 = zts_comment[1] if len(zts_comment) > 1 else ''
+                            zt.save()
+        except Exception as ex:
+            print('update_bk2_by_jys skipped:', ex)
 
     @staticmethod
     def fetch_concept(dtn):

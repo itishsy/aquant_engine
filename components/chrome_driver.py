@@ -2,7 +2,6 @@ import os
 import shutil
 import stat
 from urllib.parse import urlparse
-import requests
 from selenium import webdriver
 from selenium.common.exceptions import TimeoutException, WebDriverException
 from selenium.webdriver.support.ui import WebDriverWait
@@ -30,42 +29,61 @@ class ChromeDriver:
     def __init__(self, port=None):
         print("=====chrome driver start=====")
         self.driver = None
-        self.session = requests.Session()
-        self.session.headers.update(self.DEFAULT_HEADERS)
-        options = Options()
-        options.page_load_strategy = "eager"
-        chrome_binary = self._find_chrome_binary()
-        if chrome_binary is not None:
-            options.binary_location = chrome_binary
-        self._apply_runtime_options(options, port)
-        if port is not None:
-            if not self.check_port():
-                self.driver = None
-                return
-            options.add_experimental_option("debuggerAddress", "127.0.0.1:9222")
-        # options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        if port is not None and not self.check_port():
+            return
+
         driver_path = self._find_chromedriver()
-        try:
-            if driver_path:
-                self._ensure_executable(driver_path)
-                service = Service(driver_path)
-                self.driver = webdriver.Chrome(service=service, options=options)
-            else:
-                self.driver = webdriver.Chrome(options=options)
-            self.driver.set_page_load_timeout(30)
-        except Exception as ex:
-            print("chrome driver unavailable:", ex)
-            self.driver = None
+        if driver_path:
+            self._ensure_executable(driver_path)
+
+        last_error = None
+        for use_legacy_headless in (False, True):
+            options = self._build_options(port, use_legacy_headless=use_legacy_headless)
+            try:
+                if driver_path:
+                    service = Service(driver_path)
+                    self.driver = webdriver.Chrome(service=service, options=options)
+                else:
+                    self.driver = webdriver.Chrome(options=options)
+                self.driver.set_page_load_timeout(30)
+                self.driver.set_script_timeout(20)
+                self.access("data:,", wait=0)
+                return
+            except Exception as ex:
+                last_error = ex
+                if self.driver is not None:
+                    try:
+                        self.driver.quit()
+                    except Exception:
+                        pass
+                    self.driver = None
+        print("chrome driver unavailable:", last_error)
 
     @staticmethod
     def _component_dir():
         return os.path.join(os.path.dirname(__file__), "browser", "linux64")
 
     @staticmethod
-    def _apply_runtime_options(options, port):
+    def _build_options(port=None, use_legacy_headless=False):
+        options = Options()
+        options.page_load_strategy = "eager"
+        chrome_binary = ChromeDriver._find_chrome_binary()
+        if chrome_binary is not None:
+            options.binary_location = chrome_binary
+        ChromeDriver._apply_runtime_options(options, port, use_legacy_headless=use_legacy_headless)
+        if port is not None:
+            options.add_experimental_option("debuggerAddress", "127.0.0.1:9222")
+        return options
+
+    @staticmethod
+    def _apply_runtime_options(options, port, use_legacy_headless=False):
         options.add_argument("--start-maximized")
+        options.add_argument("--disable-background-networking")
+        options.add_argument("--disable-extensions")
+        options.add_argument("--disable-popup-blocking")
+        options.add_argument("--remote-allow-origins=*")
         if os.name == "posix":
-            options.add_argument("--headless=new")
+            options.add_argument("--headless" if use_legacy_headless else "--headless=new")
             options.add_argument("--no-sandbox")
             options.add_argument("--disable-gpu")
             options.add_argument("--disable-dev-shm-usage")
@@ -132,8 +150,7 @@ class ChromeDriver:
             return False
 
     def access(self, url, wait=2):
-        if self.driver is None:
-            return
+        self._ensure_driver()
         try:
             self.driver.get(url)
             time.sleep(wait)
@@ -148,8 +165,7 @@ class ChromeDriver:
             raise
 
     def element(self, xpath, timeout=20, parent=None):
-        if self.driver is None:
-            return None
+        self._ensure_driver()
         try:
             if parent is not None:
                 xpath = self._xpath(parent) + xpath[1:] if xpath.startswith('.') else xpath
@@ -162,8 +178,7 @@ class ChromeDriver:
             return None
 
     def elements(self, xpath, timeout=20, parent=None):
-        if self.driver is None:
-            return None
+        self._ensure_driver()
         try:
             if parent is not None:
                 xpath = self._xpath(parent) + xpath[1:] if xpath.startswith('.') else xpath
@@ -176,8 +191,7 @@ class ChromeDriver:
             return None
 
     def _xpath(self, element):
-        if self.driver is None:
-            return ''
+        self._ensure_driver()
         return self.driver.execute_script("""
             function generateXPath(elt) {
                 let path = '';
@@ -224,106 +238,81 @@ class ChromeDriver:
         return ele is not None
 
     def fetch_data(self, url, data='data', is_post=False, post_json=None):
-        if self.driver is None:
-            headers = self._request_headers(url)
-            if is_post:
-                response = self.session.post(url, json=post_json, headers=headers, timeout=20)
-            else:
-                response = self.session.get(url, headers=headers, timeout=20)
-            response.raise_for_status()
-            json_data = response.json()
-            return json_data[data] if data is not None else json_data
+        self._ensure_driver()
+        self._ensure_context(url)
+        method = "POST" if is_post else "GET"
+        payload = self.driver.execute_async_script("""
+            const url = arguments[0];
+            const method = arguments[1];
+            const body = arguments[2];
+            const callback = arguments[3];
+            const headers = {
+                "Accept": "application/json,text/plain,*/*"
+            };
+            if (body !== null) {
+                headers["Content-Type"] = "application/json";
+            }
 
-        if is_post:
-            # 启用网络跟踪
-            self.driver.execute_cdp_cmd("Network.enable", {})
-
-            # 存储响应的字典
-            responses = {}
-
-            # 监听响应事件
-            def response_listener(event):
-                params = event.get("params", {})
-                if "requestId" in params and "response" in params:
-                    request_id = params["requestId"]
-                    responses[request_id] = params["response"]
-
-            # 注册事件监听器（通过性能日志）
-            # self.driver.get_log('performance')  # 清除旧日志
-            self.driver.execute_script("""
-                window.addEventListener('load', function() {
-                    console.log('Page loaded, ready for requests');
+            fetch(url, {
+                method,
+                headers,
+                credentials: "include",
+                body: body === null ? undefined : JSON.stringify(body),
+                redirect: "follow"
+            }).then(async (response) => {
+                const text = await response.text();
+                callback({
+                    ok: response.ok,
+                    status: response.status,
+                    statusText: response.statusText,
+                    text
                 });
-            """)
-            # 构建请求
-            request_id = self.driver.execute_cdp_cmd("Network.send", {
-                "method": "POST",
-                "url": url,
-                "headers": {
-                    "Content-Type": "application/json"
-                },
-                "postData": json.dumps(post_json)
-            })["requestId"]
+            }).catch((error) => {
+                callback({
+                    ok: false,
+                    error: String(error)
+                });
+            });
+        """, url, method, post_json if is_post else None)
 
-            # 等待响应（最多5秒）
-            start_time = time.time()
-            while request_id not in responses and time.time() - start_time < 5:
-                # 处理性能日志获取响应
-                logs = self.driver.get_log('performance')
-                for entry in logs:
-                    try:
-                        log = json.loads(entry['message'])
-                        message = log.get('message', {})
-                        if message.get('method') == 'Network.responseReceived':
-                            event_params = message.get('params', {})
-                            if event_params.get('requestId') == request_id:
-                                responses[request_id] = event_params.get('response', {})
-                    except:
-                        continue
+        if not payload.get("ok"):
+            if payload.get("error"):
+                raise RuntimeError(payload["error"])
+            raise RuntimeError("HTTP {} {}".format(payload.get("status"), payload.get("statusText", "")))
 
-            # 获取响应体
-            if request_id in responses:
-                response = responses[request_id]
-                try:
-                    body = self.driver.execute_cdp_cmd("Network.getResponseBody",
-                                                  {"requestId": request_id})
-                    print("POST 响应状态码:", response.get("status", "N/A"))
-                    print("响应头:", json.dumps(response.get("headers", {}), indent=2))
-                    print("响应体:", body.get("body", "No body"))
-                except Exception as e:
-                    print(f"获取响应体失败: {str(e)}")
-            else:
-                print("未收到响应")
-            json_data = {}
-            # print(json_data)
-        else:
-            self.access(url)
-            text = self.text("//pre")
-            json_data = json.loads(text) if text else {}
+        json_data = json.loads(payload.get("text") or "{}")
         return json_data[data]
 
     @staticmethod
-    def _request_headers(url):
+    def _context_url(url):
         parsed = urlparse(url)
         host = parsed.netloc.lower()
-        headers = dict(ChromeDriver.DEFAULT_HEADERS)
-        headers["Host"] = parsed.netloc
-
         if "10jqka.com.cn" in host:
-            headers["Referer"] = "https://dq.10jqka.com.cn/"
-            headers["Origin"] = "https://dq.10jqka.com.cn"
+            return "https://dq.10jqka.com.cn/"
         elif "cls.cn" in host:
-            headers["Referer"] = "https://www.cls.cn/"
-            headers["Origin"] = "https://www.cls.cn"
+            return "https://www.cls.cn/"
+        elif "taoguba.com.cn" in host:
+            return "https://www.taoguba.com.cn/"
         elif "xueqiu.com" in host:
-            headers["Referer"] = "https://xueqiu.com/"
-            headers["Origin"] = "https://xueqiu.com"
+            return "https://xueqiu.com/"
+        return "{}://{}/".format(parsed.scheme, parsed.netloc)
 
-        return headers
+    def _ensure_context(self, url):
+        context_url = self._context_url(url)
+        current = ""
+        try:
+            current = self.driver.current_url or ""
+        except Exception:
+            current = ""
+        if not current.startswith(context_url):
+            self.access(context_url, wait=1)
+
+    def _ensure_driver(self):
+        if self.driver is None:
+            raise RuntimeError("Chrome driver unavailable")
 
     def quit(self):
         print("=====chrome driver quit=====")
         if self.driver is not None:
             self.driver.quit()
-        self.session.close()
 

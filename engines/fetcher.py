@@ -132,6 +132,21 @@ def xueqiu_link(code, name, last=None, change=None):
 @job_engine
 class Fupan(Fetcher):
 
+    @staticmethod
+    def _safe_fetch_data(chrome, url, data='data', default=None):
+        try:
+            return chrome.fetch_data(url, data=data)
+        except Exception as ex:
+            print('fetch skipped:', url, ex)
+            return default
+
+    @staticmethod
+    def _safe_fetch_nested(chrome, url, key, default=None):
+        payload = Fupan._safe_fetch_data(chrome, url, default={})
+        if isinstance(payload, dict):
+            return payload.get(key, default)
+        return default
+
     def fetch(self):
         chrome = ChromeDriver()
         try:
@@ -176,43 +191,53 @@ class Fupan(Fetcher):
                 # 9.最强题材
                 pan.concept = self.fetch_concept(dtn)
                 # 10.今日机会
-                subject_data = chrome.fetch_data('https://www.cls.cn/api/subject/recommend/article?app=CailianpressWeb&os=web&sv=8.4.6&sign=9f8797a1f4de66c2370f7a03990d2737')
-                chance = subject_data['today_chances']
+                subject_data = self._safe_fetch_data(
+                    chrome,
+                    'https://www.cls.cn/api/subject/recommend/article?app=CailianpressWeb&os=web&sv=8.4.6&sign=9f8797a1f4de66c2370f7a03990d2737',
+                    default={}
+                ) or {}
+                chance = subject_data.get('today_chances', [])
                 pan.chance = self._format_subject_items(chance, 'stock_list', 'article_name')
                 # 11.今日风口
-                tuyere = subject_data['today_tuyeres']
+                tuyere = subject_data.get('today_tuyeres', [])
                 pan.tuyere = self._format_subject_items(tuyere, 'stocks', 'driver')
                 # 12.今日话题
                 topic_url = 'https://dq.10jqka.com.cn/fuyao/hot_list_data/out/hot_list/v1/topic?page=1&page_size=10'
-                topic_data = chrome.fetch_data(topic_url)['topic_list']
+                topic_data = self._safe_fetch_nested(chrome, topic_url, 'topic_list', default=[]) or []
                 pan.topic = self._format_ranked_text(topic_data, 'title', 'description')
                 # 13.热门题材
                 subject_url = 'https://dq.10jqka.com.cn/fuyao/hot_list_data/out/hot_list/v1/plate?type=concept'
-                plate_list = chrome.fetch_data(subject_url)['plate_list']
+                plate_list = self._safe_fetch_nested(chrome, subject_url, 'plate_list', default=[]) or []
                 pan.subject = self._format_plate_list(plate_list)
                 # 14.资金动向
-                fund_data = chrome.fetch_data('https://x-quote.cls.cn/web_quote/plate/plate_list?app=CailianpressWeb&os=web&page=1&rever=1&sv=8.4.6&type=industry&way=change&sign=ef1ec7886be706a0b722d7e7bf3c0054')
-                top_fund = fund_data['main_fund_diff']['top_main_fund_diff']
-                last_fund = fund_data['main_fund_diff']['last_main_fund_diff']
-                pan.fund = '流入 (1) {}({}亿,{}%); (2) {}({}亿,{}); (3) {}({}亿,{})<br> 流出 (1) {}({},{}); (2) {}({},{}) ; (3) {}({},{})'.format(
-                    top_fund[0]['secu_name'], round(top_fund[0]['main_fund_diff'] / 100000000, 2),
-                    round(top_fund[0]['change'] * 100, 2),
-                    top_fund[1]['secu_name'], round(top_fund[1]['main_fund_diff'] / 100000000, 2),
-                    round(top_fund[1]['change'] * 100, 2),
-                    top_fund[2]['secu_name'], round(top_fund[2]['main_fund_diff'] / 100000000, 2),
-                    round(top_fund[2]['change'] * 100, 2),
-                    last_fund[0]['secu_name'], round(last_fund[0]['main_fund_diff'] / 100000000, 2),
-                    round(last_fund[0]['change'] * 100, 2),
-                    last_fund[1]['secu_name'], round(last_fund[1]['main_fund_diff'] / 100000000, 2),
-                    round(last_fund[1]['change'] * 100, 2),
-                    last_fund[2]['secu_name'], round(last_fund[2]['main_fund_diff'] / 100000000, 2),
-                    round(last_fund[2]['change'] * 100, 2))
+                fund_data = self._safe_fetch_data(
+                    chrome,
+                    'https://x-quote.cls.cn/web_quote/plate/plate_list?app=CailianpressWeb&os=web&page=1&rever=1&sv=8.4.6&type=industry&way=change&sign=ef1ec7886be706a0b722d7e7bf3c0054',
+                    default={}
+                ) or {}
+                main_fund = fund_data.get('main_fund_diff', {})
+                top_fund = main_fund.get('top_main_fund_diff', [])
+                last_fund = main_fund.get('last_main_fund_diff', [])
+                if len(top_fund) >= 3 and len(last_fund) >= 3:
+                    pan.fund = '流入 (1) {}({}亿,{}%); (2) {}({}亿,{}); (3) {}({}亿,{})<br> 流出 (1) {}({},{}); (2) {}({},{}) ; (3) {}({},{})'.format(
+                        top_fund[0]['secu_name'], round(top_fund[0]['main_fund_diff'] / 100000000, 2),
+                        round(top_fund[0]['change'] * 100, 2),
+                        top_fund[1]['secu_name'], round(top_fund[1]['main_fund_diff'] / 100000000, 2),
+                        round(top_fund[1]['change'] * 100, 2),
+                        top_fund[2]['secu_name'], round(top_fund[2]['main_fund_diff'] / 100000000, 2),
+                        round(top_fund[2]['change'] * 100, 2),
+                        last_fund[0]['secu_name'], round(last_fund[0]['main_fund_diff'] / 100000000, 2),
+                        round(last_fund[0]['change'] * 100, 2),
+                        last_fund[1]['secu_name'], round(last_fund[1]['main_fund_diff'] / 100000000, 2),
+                        round(last_fund[1]['change'] * 100, 2),
+                        last_fund[2]['secu_name'], round(last_fund[2]['main_fund_diff'] / 100000000, 2),
+                        round(last_fund[2]['change'] * 100, 2))
                 # 15.短期潜伏
-                latent = subject_data['short_latents']
+                latent = subject_data.get('short_latents', [])
                 pan.latent = '{} | {}<br>{} | {}<br>{} | {};'.format(
-                    latent[0]['subject_name'], latent[0]['subject_description'],
-                    latent[1]['subject_name'], latent[1]['subject_description'],
-                    latent[2]['subject_name'], latent[2]['subject_description']
+                    latent[0]['subject_name'] if len(latent) > 0 else '', latent[0]['subject_description'] if len(latent) > 0 else '',
+                    latent[1]['subject_name'] if len(latent) > 1 else '', latent[1]['subject_description'] if len(latent) > 1 else '',
+                    latent[2]['subject_name'] if len(latent) > 2 else '', latent[2]['subject_description'] if len(latent) > 2 else ''
                 )
                 pan.created = datetime.now()
                 pan.save()
@@ -220,13 +245,30 @@ class Fupan(Fetcher):
                 # hot
                 hots = []
                 """ 淘股吧,24小时热股榜单 """
-                hot_tgb = chrome.fetch_data("https://www.taoguba.com.cn/new/nrnt/getNoticeStock?type=D", data='dto')
-                hot_cls = chrome.fetch_data('https://api3.cls.cn/v1/hot_stock?app=cailianpress&os=ios&sv=800&sign=f7f970ee36fc102317eeea2e5a6eb178')
-                hot_ths = chrome.fetch_data("https://dq.10jqka.com.cn/fuyao/hot_list_data/out/hot_list/v1/stock?stock_type=a&type=day&list_type=normal")['stock_list']
+                hot_tgb = self._safe_fetch_data(
+                    chrome,
+                    "https://www.taoguba.com.cn/new/nrnt/getNoticeStock?type=D",
+                    data='dto',
+                    default=[]
+                ) or []
+                hot_cls = self._safe_fetch_data(
+                    chrome,
+                    'https://api3.cls.cn/v1/hot_stock?app=cailianpress&os=ios&sv=800&sign=f7f970ee36fc102317eeea2e5a6eb178',
+                    default=[]
+                ) or []
+                hot_ths = self._safe_fetch_nested(
+                    chrome,
+                    "https://dq.10jqka.com.cn/fuyao/hot_list_data/out/hot_list/v1/stock?stock_type=a&type=day&list_type=normal",
+                    'stock_list',
+                    default=[]
+                ) or []
                 if len(hot_ths) < 10:
-                    hot_ths = chrome.fetch_data(
-                        "https://dq.10jqka.com.cn/fuyao/hot_list_data/out/hot_list/v1/stock?stock_type=a&type=hour&list_type=normal")[
-                        'stock_list']
+                    hot_ths = self._safe_fetch_nested(
+                        chrome,
+                        "https://dq.10jqka.com.cn/fuyao/hot_list_data/out/hot_list/v1/stock?stock_type=a&type=hour&list_type=normal",
+                        'stock_list',
+                        default=[]
+                    ) or []
                 scores = [37, 31, 29, 23, 19, 17, 13, 11, 7, 5, 3, 2, 1, 1, 1, 1, 1, 1, 1, 1]
                 hot_size = min(20, len(hot_cls), len(hot_tgb), len(hot_ths), len(scores))
                 for i in range(hot_size):
@@ -273,6 +315,8 @@ class Fupan(Fetcher):
 
     @staticmethod
     def _format_subject_items(items, stocks_key, detail_key):
+        if not items:
+            return ''
         lines = []
         for item in items[:3]:
             lines.append(
@@ -286,6 +330,8 @@ class Fupan(Fetcher):
 
     @staticmethod
     def _format_ranked_text(items, title_key, desc_key):
+        if not items:
+            return ''
         lines = []
         for idx, item in enumerate(items[:5], start=1):
             lines.append('({}){}|{}'.format(idx, item.get(title_key, ''), item.get(desc_key, '')))
@@ -293,6 +339,8 @@ class Fupan(Fetcher):
 
     @staticmethod
     def _format_plate_list(plate_list):
+        if not plate_list:
+            return ''
         lines = []
         for idx, plate in enumerate(plate_list[:5], start=1):
             tag = plate.get('hot_tag') or plate.get('tag') or ''

@@ -1,6 +1,8 @@
 import os
 import shutil
 import stat
+import subprocess
+import tempfile
 from urllib.parse import urlparse
 from selenium import webdriver
 from selenium.common.exceptions import TimeoutException, WebDriverException
@@ -29,6 +31,8 @@ class ChromeDriver:
     def __init__(self, port=None):
         print("=====chrome driver start=====")
         self.driver = None
+        self.virtual_display = None
+        self.user_data_dir = None
         self.headless = self._is_headless_enabled()
         if port is not None and not self.check_port():
             return
@@ -37,12 +41,20 @@ class ChromeDriver:
         if driver_path:
             self._ensure_executable(driver_path)
 
+        launch_plans = self._build_launch_plans()
         last_error = None
-        for use_legacy_headless in (False, True):
-            if not self.headless and use_legacy_headless:
-                break
-            options = self._build_options(port, use_legacy_headless=use_legacy_headless, headless=self.headless)
+        for launch_plan in launch_plans:
+            self._stop_virtual_display()
+            self._cleanup_user_data_dir()
+            options = self._build_options(
+                port,
+                use_legacy_headless=launch_plan["use_legacy_headless"],
+                headless=launch_plan["headless"],
+            )
             try:
+                print("chrome launch mode:", self._describe_launch_plan(launch_plan))
+                if launch_plan["use_virtual_display"]:
+                    self._start_virtual_display()
                 if driver_path:
                     service = Service(driver_path)
                     self.driver = webdriver.Chrome(service=service, options=options)
@@ -60,19 +72,43 @@ class ChromeDriver:
                     except Exception:
                         pass
                     self.driver = None
+        self._stop_virtual_display()
+        self._cleanup_user_data_dir()
         print("chrome driver unavailable:", last_error)
 
     @staticmethod
     def _component_dir():
         return os.path.join(os.path.dirname(__file__), "browser", "linux64")
 
+    def _build_launch_plans(self):
+        if os.name != "posix":
+            return [{"headless": self.headless, "use_legacy_headless": False, "use_virtual_display": False}]
+
+        plans = []
+        if self.headless:
+            plans.append({"headless": True, "use_legacy_headless": False, "use_virtual_display": False})
+            plans.append({"headless": True, "use_legacy_headless": True, "use_virtual_display": False})
+        if self._should_use_virtual_display():
+            plans.append({"headless": False, "use_legacy_headless": False, "use_virtual_display": True})
+        elif not self.headless:
+            plans.append({"headless": False, "use_legacy_headless": False, "use_virtual_display": False})
+        return plans
+
     @staticmethod
-    def _build_options(port=None, use_legacy_headless=False, headless=True):
+    def _describe_launch_plan(launch_plan):
+        if launch_plan["use_virtual_display"]:
+            return "xvfb-visible"
+        if launch_plan["headless"]:
+            return "legacy-headless" if launch_plan["use_legacy_headless"] else "headless-new"
+        return "visible"
+
+    def _build_options(self, port=None, use_legacy_headless=False, headless=True):
         options = Options()
         options.page_load_strategy = "eager"
         chrome_binary = ChromeDriver._find_chrome_binary()
         if chrome_binary is not None:
             options.binary_location = chrome_binary
+        options.add_argument("--user-data-dir={}".format(self._make_user_data_dir()))
         ChromeDriver._apply_runtime_options(
             options,
             port,
@@ -90,6 +126,7 @@ class ChromeDriver:
         options.add_argument("--disable-extensions")
         options.add_argument("--disable-popup-blocking")
         options.add_argument("--remote-allow-origins=*")
+        options.add_argument("--disable-software-rasterizer")
         if os.name == "posix":
             if headless:
                 options.add_argument("--headless" if use_legacy_headless else "--headless=new")
@@ -99,6 +136,13 @@ class ChromeDriver:
             options.add_argument("--window-size=1920,1080")
         elif port is not None:
             options.add_argument("--disable-dev-shm-usage")
+
+    def _should_use_virtual_display(self):
+        if os.name != "posix":
+            return False
+        if os.getenv("DISPLAY"):
+            return False
+        return shutil.which("Xvfb") is not None
 
     @staticmethod
     def _is_headless_enabled():
@@ -151,6 +195,56 @@ class ChromeDriver:
             return
         mode = os.stat(path).st_mode
         os.chmod(path, mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+    def _make_user_data_dir(self):
+        if self.user_data_dir is None:
+            self.user_data_dir = tempfile.mkdtemp(prefix="aquant-chrome-")
+        return self.user_data_dir
+
+    def _cleanup_user_data_dir(self):
+        if self.user_data_dir:
+            shutil.rmtree(self.user_data_dir, ignore_errors=True)
+            self.user_data_dir = None
+
+    def _start_virtual_display(self):
+        if self.virtual_display is not None:
+            return
+        xvfb = shutil.which("Xvfb")
+        if not xvfb:
+            raise RuntimeError("Xvfb not found for virtual display")
+
+        last_error = None
+        for display_num in range(99, 110):
+            display = ":{}".format(display_num)
+            env = os.environ.copy()
+            env["DISPLAY"] = display
+            try:
+                self.virtual_display = subprocess.Popen(
+                    [xvfb, display, "-screen", "0", "1920x1080x24", "-nolisten", "tcp"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    env=env,
+                )
+                time.sleep(1)
+                if self.virtual_display.poll() is None:
+                    os.environ["DISPLAY"] = display
+                    return
+                last_error = RuntimeError("Xvfb exited immediately on {}".format(display))
+            except Exception as ex:
+                last_error = ex
+        raise RuntimeError("Unable to start Xvfb: {}".format(last_error))
+
+    def _stop_virtual_display(self):
+        if self.virtual_display is not None:
+            try:
+                self.virtual_display.terminate()
+                self.virtual_display.wait(timeout=5)
+            except Exception:
+                try:
+                    self.virtual_display.kill()
+                except Exception:
+                    pass
+            self.virtual_display = None
 
     @staticmethod
     def check_port(host="127.0.0.1", port=9222, timeout=5):
@@ -323,10 +417,17 @@ class ChromeDriver:
 
     def _ensure_driver(self):
         if self.driver is None:
+            if os.name == "posix" and not os.getenv("DISPLAY") and not self.headless and not self._should_use_virtual_display():
+                raise RuntimeError("Chrome driver unavailable: DISPLAY missing and Xvfb not installed")
             raise RuntimeError("Chrome driver unavailable")
 
     def quit(self):
         print("=====chrome driver quit=====")
         if self.driver is not None:
-            self.driver.quit()
+            try:
+                self.driver.quit()
+            finally:
+                self.driver = None
+        self._stop_virtual_display()
+        self._cleanup_user_data_dir()
 

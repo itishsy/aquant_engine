@@ -17,6 +17,8 @@ import socket
 
 
 class ChromeDriver:
+    FETCH_TIMEOUT_SECONDS = 12
+    SCRIPT_TIMEOUT_BUFFER_SECONDS = 8
     DEFAULT_HEADERS = {
         "User-Agent": (
             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
@@ -61,7 +63,9 @@ class ChromeDriver:
                 else:
                     self.driver = webdriver.Chrome(options=options)
                 self.driver.set_page_load_timeout(30)
-                self.driver.set_script_timeout(20)
+                self.driver.set_script_timeout(
+                    self.FETCH_TIMEOUT_SECONDS + self.SCRIPT_TIMEOUT_BUFFER_SECONDS
+                )
                 self.access("data:,", wait=0)
                 return
             except Exception as ex:
@@ -345,29 +349,42 @@ class ChromeDriver:
         ele = self.element(xpath, timeout=1)
         return ele is not None
 
-    def fetch_data(self, url, data='data', is_post=False, post_json=None):
+    def fetch_data(self, url, data='data', is_post=False, post_json=None, timeout=None):
         self._ensure_driver()
-        self._ensure_context(url)
-        method = "POST" if is_post else "GET"
-        payload = self.driver.execute_async_script("""
+        timeout = timeout or self.FETCH_TIMEOUT_SECONDS
+        last_error = None
+        for retry in range(2):
+            if retry > 0:
+                self.access(self._context_url(url), wait=1)
+            else:
+                self._ensure_context(url)
+            method = "POST" if is_post else "GET"
+            payload = None
+            try:
+                payload = self.driver.execute_async_script("""
             const url = arguments[0];
             const method = arguments[1];
             const body = arguments[2];
-            const callback = arguments[3];
+            const timeoutMs = arguments[3];
+            const callback = arguments[4];
             const headers = {
                 "Accept": "application/json,text/plain,*/*"
             };
             if (body !== null) {
                 headers["Content-Type"] = "application/json";
             }
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort("fetch timeout"), timeoutMs);
 
             fetch(url, {
                 method,
                 headers,
                 credentials: "include",
                 body: body === null ? undefined : JSON.stringify(body),
-                redirect: "follow"
+                redirect: "follow",
+                signal: controller.signal
             }).then(async (response) => {
+                clearTimeout(timer);
                 const text = await response.text();
                 callback({
                     ok: response.ok,
@@ -376,20 +393,34 @@ class ChromeDriver:
                     text
                 });
             }).catch((error) => {
+                clearTimeout(timer);
                 callback({
                     ok: false,
                     error: String(error)
                 });
             });
-        """, url, method, post_json if is_post else None)
+        """, url, method, post_json if is_post else None, int(timeout * 1000))
+            except TimeoutException as ex:
+                last_error = RuntimeError("Browser fetch timed out for {}".format(url))
+                continue
 
-        if not payload.get("ok"):
-            if payload.get("error"):
-                raise RuntimeError(payload["error"])
-            raise RuntimeError("HTTP {} {}".format(payload.get("status"), payload.get("statusText", "")))
+            if not payload.get("ok"):
+                if payload.get("error"):
+                    last_error = RuntimeError(payload["error"])
+                else:
+                    last_error = RuntimeError(
+                        "HTTP {} {}".format(payload.get("status"), payload.get("statusText", ""))
+                    )
+                if retry == 0:
+                    continue
+                raise last_error
 
-        json_data = json.loads(payload.get("text") or "{}")
-        return json_data[data]
+            json_data = json.loads(payload.get("text") or "{}")
+            return json_data[data]
+
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("Browser fetch failed for {}".format(url))
 
     @staticmethod
     def _context_url(url):

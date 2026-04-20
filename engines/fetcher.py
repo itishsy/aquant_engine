@@ -133,11 +133,15 @@ def xueqiu_link(code, name, last=None, change=None):
 class Fupan(Fetcher):
 
     @staticmethod
+    def _log_step(message):
+        print('[{}] [fupan] {}'.format(datetime.now(), message))
+
+    @staticmethod
     def _safe_fetch_data(chrome, url, data='data', default=None):
         try:
             return chrome.fetch_data(url, data=data)
         except Exception as ex:
-            print('fetch skipped:', url, ex)
+            Fupan._log_step('fetch skipped: {} {}'.format(url, ex))
             return default
 
     @staticmethod
@@ -151,15 +155,19 @@ class Fupan(Fetcher):
         chrome = ChromeDriver()
         try:
             dtn = datetime.now().strftime("%Y-%m-%d")
+            self._log_step('fetch start, date={}'.format(dtn))
             if not Pan.select().where(Pan.date == dtn).exists():
+                self._log_step('daily pan record not found, start building')
                 pan = Pan()
                 pan.date = dtn
                 # 1.指数
+                self._log_step('step 1/15: fetch zs data')
                 zs_data = chrome.fetch_data(
                     'https://x-quote.cls.cn/v2/quote/a/web/stocks/basic?app=CailianpressWeb&fields=secu_name,secu_code,trade_status,change,change_px,last_px&os=web&secu_codes=sh000001,sz399001,sh000905,sz399006&sv=8.4.6&sign=7ddfd2eef7564087ff01a1782c724f43')
                 pan.zs = '{}({}%)'.format(round(zs_data['sh000001']['last_px'], 2),
                                           round(zs_data['sh000001']['change'] * 100, 2))
                 # 盘面
+                self._log_step('step 2/15: fetch market emotion')
                 pm_data = chrome.fetch_data(
                     'https://x-quote.cls.cn/v2/quote/a/stock/emotion?app=CailianpressWeb&os=web&sv=8.4.6&sign=9f8797a1f4de66c2370f7a03990d2737')
                 # 2.成交量
@@ -176,14 +184,18 @@ class Fupan(Fetcher):
                 # 6.封板率
                 pan.fbl = pm_data['up_ratio']
                 # 7.最高板
+                self._log_step('step 3/15: fetch limit-up analysis')
                 ztb_data = chrome.fetch_data('https://x-quote.cls.cn/v2/quote/a/plate/up_down_analysis')
                 height = ztb_data['continuous_limit_up'][0]
                 pan.zgb = height['height']
+                self._log_step('step 4/15: update bk1 by cls')
                 self.update_bk1_by_cls(ztb_data['plate_stock'], dtn)
                 if chrome.driver is not None:
+                    self._log_step('step 5/15: update bk2 by jiuyangongshe')
                     self.update_bk2_by_jys(chrome, dtn)
                 # 8.每日收评
                 if chrome.driver is not None:
+                    self._log_step('step 6/15: fetch review article text')
                     chrome.access('https://www.cls.cn/subject/1139')
                     rev_text = chrome.text('//*[@id="__next"]/div/div[2]/div[2]/div[1]/div[2]/div[2]/div[1]/div[2]/div[1]/a')
                     if rev_text and '】' in rev_text:
@@ -191,6 +203,9 @@ class Fupan(Fetcher):
                 # 9.最强题材
                 pan.concept = self.fetch_concept(dtn)
                 # 10.今日机会
+                self._log_step('step 7/15: aggregate concept ranking')
+                pan.concept = self.fetch_concept(dtn)
+                self._log_step('step 8/15: fetch subject recommendation data')
                 subject_data = self._safe_fetch_data(
                     chrome,
                     'https://www.cls.cn/api/subject/recommend/article?app=CailianpressWeb&os=web&sv=8.4.6&sign=9f8797a1f4de66c2370f7a03990d2737',
@@ -202,14 +217,17 @@ class Fupan(Fetcher):
                 tuyere = subject_data.get('today_tuyeres', [])
                 pan.tuyere = self._format_subject_items(tuyere, 'stocks', 'driver')
                 # 12.今日话题
+                self._log_step('step 9/15: fetch topic hot list')
                 topic_url = 'https://dq.10jqka.com.cn/fuyao/hot_list_data/out/hot_list/v1/topic?page=1&page_size=10'
                 topic_data = self._safe_fetch_nested(chrome, topic_url, 'topic_list', default=[]) or []
                 pan.topic = self._format_ranked_text(topic_data, 'title', 'description')
                 # 13.热门题材
+                self._log_step('step 10/15: fetch concept plate hot list')
                 subject_url = 'https://dq.10jqka.com.cn/fuyao/hot_list_data/out/hot_list/v1/plate?type=concept'
                 plate_list = self._safe_fetch_nested(chrome, subject_url, 'plate_list', default=[]) or []
                 pan.subject = self._format_plate_list(plate_list)
                 # 14.资金动向
+                self._log_step('step 11/15: fetch fund flow')
                 fund_data = self._safe_fetch_data(
                     chrome,
                     'https://x-quote.cls.cn/web_quote/plate/plate_list?app=CailianpressWeb&os=web&page=1&rever=1&sv=8.4.6&type=industry&way=change&sign=ef1ec7886be706a0b722d7e7bf3c0054',
@@ -233,6 +251,7 @@ class Fupan(Fetcher):
                         last_fund[2]['secu_name'], round(last_fund[2]['main_fund_diff'] / 100000000, 2),
                         round(last_fund[2]['change'] * 100, 2))
                 # 15.短期潜伏
+                self._log_step('step 12/15: build latent topics')
                 latent = subject_data.get('short_latents', [])
                 pan.latent = '{} | {}<br>{} | {}<br>{} | {};'.format(
                     latent[0]['subject_name'] if len(latent) > 0 else '', latent[0]['subject_description'] if len(latent) > 0 else '',
@@ -241,8 +260,10 @@ class Fupan(Fetcher):
                 )
                 pan.created = datetime.now()
                 pan.save()
+                self._log_step('step 13/15: pan saved')
 
                 # hot
+                self._log_step('step 14/15: fetch hot rankings from multiple sources')
                 hots = []
                 """ 淘股吧,24小时热股榜单 """
                 hot_tgb = self._safe_fetch_data(
@@ -303,14 +324,20 @@ class Fupan(Fetcher):
                     if not hot3['fullCode'][2:].startswith("8"):
                         self.set_hots(hots, dtn, 'tgb', (i+1), scores[i], hot3['fullCode'][2:], hot3['stockName'], tgb_reason, tgb_comment)
                 top_10 = sorted(hots, key=lambda x: x.score, reverse=True)[:10]
+                self._log_step('step 15/15: save top hot stocks, count={}'.format(len(top_10)))
                 for top in top_10:
                     top.price, top.change = self.fetch_last_price(chrome, top.code)
                     top.created = datetime.now()
                     top.save()
+                self._log_step('fetch finished successfully')
+            else:
+                self._log_step('daily pan record already exists, skip fetch')
         except Exception as e:
+            self._log_step('fetch failed: {}'.format(e))
             print(e)
             traceback.print_exc()
         finally:
+            self._log_step('closing chrome driver')
             chrome.quit()
 
     @staticmethod

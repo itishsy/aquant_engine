@@ -114,7 +114,7 @@ class ChromeDriver:
 
     def _build_options(self, port=None, use_legacy_headless=False, headless=True):
         options = Options()
-        options.page_load_strategy = "eager"
+        options.page_load_strategy = "none"
         chrome_binary = ChromeDriver._find_chrome_binary()
         if chrome_binary is not None:
             options.binary_location = chrome_binary
@@ -276,14 +276,31 @@ class ChromeDriver:
             self.driver.get(url)
             time.sleep(wait)
         except TimeoutException:
-            print("[Warn] page load timeout:", url)
-            try:
-                self.driver.execute_script("window.stop();")
-            except WebDriverException:
-                pass
+            self._handle_page_timeout(url)
         except WebDriverException as ex:
+            if self._is_timeout_like_error(ex):
+                self._handle_page_timeout(url)
+                return
             print("[Error] browser access failed:", url, ex)
             raise
+
+    @staticmethod
+    def _is_timeout_like_error(ex):
+        message = str(ex).lower()
+        timeout_markers = (
+            "timed out receiving message from renderer",
+            "timeout",
+            "script timeout",
+            "page load timeout",
+        )
+        return any(marker in message for marker in timeout_markers)
+
+    def _handle_page_timeout(self, url):
+        print("[Warn] page load timeout:", url)
+        try:
+            self.driver.execute_script("window.stop();")
+        except WebDriverException:
+            pass
 
     def element(self, xpath, timeout=20, parent=None):
         self._ensure_driver()
@@ -438,6 +455,8 @@ class ChromeDriver:
         try:
             self.driver.set_page_load_timeout(timeout)
             self.access(url, wait=1)
+            if not self._wait_for_page_text(timeout):
+                raise RuntimeError("No response body loaded from {}".format(url))
             text = self.driver.execute_script("""
                 const body = document.body;
                 if (!body) {
@@ -457,6 +476,24 @@ class ChromeDriver:
                 self.driver.set_page_load_timeout(30)
             except Exception:
                 pass
+
+    def _wait_for_page_text(self, timeout):
+        end_time = time.time() + timeout
+        while time.time() < end_time:
+            try:
+                text = self.driver.execute_script("""
+                    const body = document.body;
+                    if (!body) {
+                        return document.documentElement ? document.documentElement.innerText : '';
+                    }
+                    return body.innerText || body.textContent || '';
+                """)
+                if text and str(text).strip():
+                    return True
+            except WebDriverException:
+                pass
+            time.sleep(0.5)
+        return False
 
     @classmethod
     def _should_fetch_via_navigation(cls, url, is_post=False):

@@ -19,6 +19,12 @@ import socket
 class ChromeDriver:
     FETCH_TIMEOUT_SECONDS = 12
     SCRIPT_TIMEOUT_BUFFER_SECONDS = 8
+    DIRECT_NAVIGATION_HOSTS = (
+        "x-quote.cls.cn",
+        "api3.cls.cn",
+        "dq.10jqka.com.cn",
+        "www.taoguba.com.cn",
+    )
     DEFAULT_HEADERS = {
         "User-Agent": (
             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
@@ -90,8 +96,8 @@ class ChromeDriver:
 
         plans = []
         if self.headless:
-            plans.append({"headless": True, "use_legacy_headless": False, "use_virtual_display": False})
             plans.append({"headless": True, "use_legacy_headless": True, "use_virtual_display": False})
+            plans.append({"headless": True, "use_legacy_headless": False, "use_virtual_display": False})
         if self._should_use_virtual_display():
             plans.append({"headless": False, "use_legacy_headless": False, "use_virtual_display": True})
         elif not self.headless:
@@ -103,7 +109,7 @@ class ChromeDriver:
         if launch_plan["use_virtual_display"]:
             return "xvfb-visible"
         if launch_plan["headless"]:
-            return "legacy-headless" if launch_plan["use_legacy_headless"] else "headless-new"
+            return "headless" if launch_plan["use_legacy_headless"] else "headless-new"
         return "visible"
 
     def _build_options(self, port=None, use_legacy_headless=False, headless=True):
@@ -125,7 +131,7 @@ class ChromeDriver:
 
     @staticmethod
     def _apply_runtime_options(options, port, use_legacy_headless=False, headless=True):
-        options.add_argument("--start-maximized")
+        options.add_argument("--lang=zh-CN")
         options.add_argument("--disable-background-networking")
         options.add_argument("--disable-extensions")
         options.add_argument("--disable-popup-blocking")
@@ -138,8 +144,11 @@ class ChromeDriver:
             options.add_argument("--disable-gpu")
             options.add_argument("--disable-dev-shm-usage")
             options.add_argument("--window-size=1920,1080")
+            options.add_argument("--hide-scrollbars")
         elif port is not None:
             options.add_argument("--disable-dev-shm-usage")
+        else:
+            options.add_argument("--start-maximized")
 
     def _should_use_virtual_display(self):
         if os.name != "posix":
@@ -352,6 +361,8 @@ class ChromeDriver:
     def fetch_data(self, url, data='data', is_post=False, post_json=None, timeout=None):
         self._ensure_driver()
         timeout = timeout or self.FETCH_TIMEOUT_SECONDS
+        if self._should_fetch_via_navigation(url, is_post=is_post):
+            return self._fetch_data_via_navigation(url, data=data, timeout=timeout)
         last_error = None
         for retry in range(2):
             if retry > 0:
@@ -421,6 +432,38 @@ class ChromeDriver:
         if last_error is not None:
             raise last_error
         raise RuntimeError("Browser fetch failed for {}".format(url))
+
+    def _fetch_data_via_navigation(self, url, data='data', timeout=None):
+        timeout = timeout or self.FETCH_TIMEOUT_SECONDS
+        try:
+            self.driver.set_page_load_timeout(timeout)
+            self.access(url, wait=1)
+            text = self.driver.execute_script("""
+                const body = document.body;
+                if (!body) {
+                    return document.documentElement ? document.documentElement.innerText : '';
+                }
+                return body.innerText || body.textContent || '';
+            """)
+            text = (text or "").strip()
+            if not text:
+                raise RuntimeError("Empty response from {}".format(url))
+            json_data = json.loads(text)
+            return json_data[data]
+        except json.JSONDecodeError as ex:
+            raise RuntimeError("Invalid JSON from {}".format(url)) from ex
+        finally:
+            try:
+                self.driver.set_page_load_timeout(30)
+            except Exception:
+                pass
+
+    @classmethod
+    def _should_fetch_via_navigation(cls, url, is_post=False):
+        if is_post:
+            return False
+        host = urlparse(url).netloc.lower()
+        return any(domain in host for domain in cls.DIRECT_NAVIGATION_HOSTS)
 
     @staticmethod
     def _context_url(url):

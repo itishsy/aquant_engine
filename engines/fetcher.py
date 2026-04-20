@@ -151,6 +151,11 @@ class Fupan(Fetcher):
             return payload.get(key, default)
         return default
 
+    @staticmethod
+    def _ensure_deadline(deadline, step_name):
+        if time.monotonic() > deadline:
+            raise TimeoutError('{} exceeded time budget'.format(step_name))
+
     def fetch(self):
         chrome = ChromeDriver()
         try:
@@ -197,7 +202,7 @@ class Fupan(Fetcher):
                 if chrome.driver is not None:
                     self._log_step('step 6/15: fetch review article text')
                     chrome.access('https://www.cls.cn/subject/1139')
-                    rev_text = chrome.text('//*[@id="__next"]/div/div[2]/div[2]/div[1]/div[2]/div[2]/div[1]/div[2]/div[1]/a')
+                    rev_text = chrome.text('//*[@id="__next"]/div/div[2]/div[2]/div[1]/div[2]/div[2]/div[1]/div[2]/div[1]/a', timeout=5, wait=0.5)
                     if rev_text and '】' in rev_text:
                         pan.review = rev_text.split('】')[1]
                 # 9.最强题材
@@ -447,21 +452,31 @@ class Fupan(Fetcher):
         if chrome.driver is None:
             return
         try:
-            chrome.access('https://www.jiuyangongshe.com/action')
-            chrome.click('//div[@class="active"]')
-            chrome.click('//div[@id="tab-accounts"]')
-            chrome.input('//div[@id="pane-accounts"]//input[@name="phone"]', '13631367271')
-            chrome.input('//div[@id="pane-accounts"]//input[@name="password"]', 'hsy841121')
-            chrome.click('//div[@id="pane-accounts"]//button[@type="button"]')
-            time.sleep(3)
+            deadline = time.monotonic() + 15
+            Fupan._log_step('jys: open action page')
+            chrome.access('https://www.jiuyangongshe.com/action', wait=1)
+            Fupan._ensure_deadline(deadline, 'jys')
+            Fupan._log_step('jys: open login tab')
+            chrome.click('//div[@class="active"]', timeout=5, wait=0.5)
+            chrome.click('//div[@id="tab-accounts"]', timeout=5, wait=0.5)
+            Fupan._ensure_deadline(deadline, 'jys')
+            Fupan._log_step('jys: input credentials')
+            chrome.input('//div[@id="pane-accounts"]//input[@name="phone"]', '13631367271', timeout=5, wait=0.5)
+            chrome.input('//div[@id="pane-accounts"]//input[@name="password"]', 'hsy841121', timeout=5, wait=0.5)
+            chrome.click('//div[@id="pane-accounts"]//button[@type="button"]', timeout=5, wait=0.5)
+            time.sleep(2)
             chrome.click('//div[text()="全部异动解析"]', timeout=10)
             time.sleep(3)
-            modules = chrome.elements("//section/ul/li") or []
+            Fupan._ensure_deadline(deadline, 'jys')
+            modules = chrome.elements("//section/ul/li", timeout=5) or []
+            Fupan._log_step('jys: modules loaded={}'.format(len(modules)))
             for module in modules:
+                Fupan._ensure_deadline(deadline, 'jys')
                 bk = chrome.element(".//div[contains(@class, 'parent')]/div[1]", parent=module)
                 if bk and not bk.text.__contains__('ST'):
                     lis = module.find_elements(By.TAG_NAME, 'li')
                     for li in lis:
+                        Fupan._ensure_deadline(deadline, 'jys')
                         shrinks = li.find_elements(By.XPATH, ".//div[contains(@class, 'shrink')]")
                         if len(shrinks) < 2:
                             continue
@@ -473,8 +488,9 @@ class Fupan(Fetcher):
                             zt.bk2 = bk.text
                             zt.comment2 = zts_comment[1] if len(zts_comment) > 1 else ''
                             zt.save()
+            Fupan._log_step('jys: update done')
         except Exception as ex:
-            print('update_bk2_by_jys skipped:', ex)
+            Fupan._log_step('update_bk2_by_jys skipped: {}'.format(ex))
 
     @staticmethod
     def fetch_concept(dtn):

@@ -1,1 +1,1 @@
-__all__ = ['engine', 'searcher', 'fetcher', 'watcher', 'sender']
+__all__ = ['engine', 'searcher', 'fetcher', 'watcher', 'sender', 'fupan']

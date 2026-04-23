@@ -2,7 +2,6 @@ from engines.engine import Fetcher, engines, job_engine
 from datetime import datetime
 from components.chrome_driver import ChromeDriver, By
 from models.review import Pan, Hot, Ztb
-from models.base import db
 # from models.ztb import Ztb, Bk
 import traceback
 import time
@@ -302,49 +301,38 @@ class Fupan(Fetcher):
                         default=[]
                     ) or []
                 scores = [37, 31, 29, 23, 19, 17, 13, 11, 7, 5, 3, 2, 1, 1, 1, 1, 1, 1, 1, 1]
-                for i, cls_item in enumerate(hot_cls[:len(scores)]):
-                    cls_stock = cls_item.get('stock', {})
-                    stock_id = cls_stock.get('StockID', '')
-                    if len(stock_id) < 3 or stock_id[2:].startswith("8"):
-                        continue
-                    up_reason = self._safe_fetch_data(
-                        chrome,
-                        'https://x-quote.cls.cn/v2/quote/a/stock/up_reason?app=cailianpress&os=ios&sv=800&secu_codes={}&sign=f7f970ee36fc102317eeea2e5a6eb178'.format(stock_id),
-                        default={}
-                    ) or {}
+                hot_size = min(20, len(hot_cls), len(hot_tgb), len(hot_ths), len(scores))
+                for i in range(hot_size):
+                    cls_stock = hot_cls[i]['stock']
+                    up_reason = chrome.fetch_data('https://x-quote.cls.cn/v2/quote/a/stock/up_reason?app=cailianpress&os=ios&sv=800&secu_codes={}&sign=f7f970ee36fc102317eeea2e5a6eb178'.format(
+                            cls_stock['StockID']))
                     cls_reason, cls_comment = '', ''
-                    reason_data = up_reason.get(stock_id, {})
+                    reason_data = up_reason[cls_stock['StockID']]
                     if 'rel_plate' in reason_data:
                         cls_reason = ', '.join([plate['plate_name'] for plate in reason_data['rel_plate']])
-                    if reason_data.get('up_reason') is not None:
-                        cls_comment = reason_data.get('up_reason', '')
-                    self.set_hots(hots, dtn, 'cls', (i + 1), scores[i], stock_id[2:], cls_stock.get('name', ''), cls_reason, cls_comment)
-
-                for i, ths_stock in enumerate(hot_ths[:len(scores)]):
-                    code = ths_stock.get('code', '')
-                    if not code or code.startswith("8"):
-                        continue
-                    tag = ths_stock.get('tag', {})
-                    ths_reason = ",".join(tag.get('concept_tag', []))
+                    if reason_data['up_reason'] is not None:
+                        cls_comment = reason_data['up_reason']
+                    if not cls_stock['StockID'][2:].startswith("8"):
+                        self.set_hots(hots, dtn, 'cls', (i+1), scores[i], cls_stock['StockID'][2:], cls_stock['name'], cls_reason, cls_comment)
+                    ths_stock = hot_ths[i]
+                    ths_reason = ",".join(ths_stock['tag']['concept_tag'])
                     ths_comment = ''
-                    if 'popularity_tag' in tag:
-                        ths_comment = tag['popularity_tag'] + '|'
+                    if 'popularity_tag' in ths_stock['tag']:
+                        ths_comment = ths_stock['tag']['popularity_tag'] + '|'
                     if 'analyse_title' in ths_stock:
                         ths_comment = ths_comment + ths_stock['analyse_title']
-                    self.set_hots(hots, dtn, 'ths', (i + 1), scores[i], code, ths_stock.get('name', ''), ths_reason, ths_comment)
-
-                for i, hot3 in enumerate(hot_tgb[:len(scores)]):
-                    full_code = hot3.get('fullCode', '')
-                    if len(full_code) < 3 or full_code[2:].startswith("8"):
-                        continue
-                    tgb_reason = hot3.get('reason', '')
-                    tgb_comment = hot3.get('linkingBoard', '')
+                    if not ths_stock['code'].startswith("8"):
+                        self.set_hots(hots, dtn, 'ths', (i+1), scores[i], ths_stock['code'], ths_stock['name'], ths_reason, ths_comment)
+                    hot3 = hot_tgb[i]
+                    tgb_reason, tgb_comment = '', ''
+                    if 'reason' in hot3:
+                        tgb_reason = hot3['reason']
+                    if 'linkingBoard' in hot3:
+                        tgb_comment = hot3['linkingBoard']
                     if 'gnList' in hot3:
-                        tgb_comment = '{}{}'.format(
-                            '' if tgb_comment == '' else tgb_comment + '|',
-                            ', '.join([gn['gnName'] for gn in hot3['gnList']])
-                        )
-                    self.set_hots(hots, dtn, 'tgb', (i + 1), scores[i], full_code[2:], hot3.get('stockName', ''), tgb_reason, tgb_comment)
+                        tgb_comment = '{}{}'.format('' if tgb_comment == '' else tgb_comment + '|', ', '.join([gn['gnName'] for gn in hot3['gnList']]))
+                    if not hot3['fullCode'][2:].startswith("8"):
+                        self.set_hots(hots, dtn, 'tgb', (i+1), scores[i], hot3['fullCode'][2:], hot3['stockName'], tgb_reason, tgb_comment)
                 top_10 = sorted(hots, key=lambda x: x.score, reverse=True)[:10]
                 self._log_step('step 15/15: save top hot stocks, count={}'.format(len(top_10)))
                 for top in top_10:
@@ -352,8 +340,6 @@ class Fupan(Fetcher):
                     top.created = datetime.now()
                     top.save()
                 self._log_step('fetch finished successfully')
-            else:
-                self._log_step('daily pan record already exists, skip fetch')
         except Exception as e:
             self._log_step('fetch failed: {}'.format(e))
             print(e)

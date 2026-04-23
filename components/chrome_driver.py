@@ -1,5 +1,4 @@
 import os
-import platform
 import shutil
 import stat
 import subprocess
@@ -15,7 +14,6 @@ from selenium.webdriver.common.by import By
 import time
 import json
 import socket
-import requests
 
 
 class ChromeDriver:
@@ -93,12 +91,6 @@ class ChromeDriver:
         return os.path.join(os.path.dirname(__file__), "browser", "linux64")
 
     def _build_launch_plans(self):
-        if self._is_linux():
-            return [
-                {"headless": True, "use_legacy_headless": False, "use_virtual_display": False},
-                {"headless": True, "use_legacy_headless": True, "use_virtual_display": False},
-            ]
-
         if os.name != "posix":
             return [{"headless": self.headless, "use_legacy_headless": False, "use_virtual_display": False}]
 
@@ -145,7 +137,7 @@ class ChromeDriver:
         options.add_argument("--disable-popup-blocking")
         options.add_argument("--remote-allow-origins=*")
         options.add_argument("--disable-software-rasterizer")
-        if ChromeDriver._is_linux():
+        if os.name == "posix":
             if headless:
                 options.add_argument("--headless" if use_legacy_headless else "--headless=new")
             options.add_argument("--no-sandbox")
@@ -159,7 +151,7 @@ class ChromeDriver:
             options.add_argument("--start-maximized")
 
     def _should_use_virtual_display(self):
-        if not self._is_linux():
+        if os.name != "posix":
             return False
         if os.getenv("DISPLAY"):
             return False
@@ -167,22 +159,17 @@ class ChromeDriver:
 
     @staticmethod
     def _is_headless_enabled():
-        if ChromeDriver._is_linux():
-            return True
         value = os.getenv("CHROME_HEADLESS", "true").strip().lower()
         return value not in ("0", "false", "no", "off")
 
     @staticmethod
     def _find_chrome_binary():
-        if ChromeDriver._is_windows():
-            candidates = [r"D:\Huangsy\chrome\chrome\chrome.exe"]
-        else:
-            candidates = [os.getenv("CHROME_BINARY")]
-        if ChromeDriver._is_linux():
-            candidates.append("/opt/google/chrome/google-chrome")
+        candidates = [os.getenv("CHROME_BINARY")]
+        if os.name == "posix":
             candidates.append(os.path.join(ChromeDriver._component_dir(), "chrome-linux64", "chrome"))
-        elif not ChromeDriver._is_windows():
+        else:
             candidates.extend([
+                r"D:\Huangsy\chrome\chrome\chrome.exe",
                 r"C:\Program Files\Google\Chrome\Application\chrome.exe",
                 r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
                 r"C:\Program Files\Chromium\Application\chrome.exe",
@@ -191,20 +178,12 @@ class ChromeDriver:
         for candidate in candidates:
             if candidate and os.path.exists(candidate):
                 return candidate
-        commands = ("google-chrome", "google-chrome-stable", "chrome", "chromium", "chromium-browser") if ChromeDriver._is_linux() else ("chrome", "chrome.exe")
+        commands = ("google-chrome", "google-chrome-stable", "chrome", "chromium", "chromium-browser") if os.name == "posix" else ("chrome", "chrome.exe")
         for cmd in commands:
             resolved = shutil.which(cmd)
             if resolved:
                 return resolved
         return None
-
-    @staticmethod
-    def _is_windows():
-        return platform.system().lower() == "windows"
-
-    @staticmethod
-    def _is_linux():
-        return platform.system().lower() == "linux"
 
     @staticmethod
     def _find_chromedriver():
@@ -466,7 +445,6 @@ class ChromeDriver:
 
             json_data = json.loads(payload.get("text") or "{}")
             return json_data[data]
-
         if last_error is not None:
             raise last_error
         raise RuntimeError("Browser fetch failed for {}".format(url))
@@ -522,14 +500,6 @@ class ChromeDriver:
             return False
         host = urlparse(url).netloc.lower()
         return any(domain in host for domain in cls.DIRECT_NAVIGATION_HOSTS)
-
-    def _cookie_dict(self):
-        if self.driver is None:
-            return {}
-        try:
-            return {item["name"]: item["value"] for item in self.driver.get_cookies()}
-        except Exception:
-            return {}
 
     @staticmethod
     def _context_url(url):
